@@ -61,7 +61,8 @@ class DroneRecognizer:
                 preds, probs = self.classifier.predict(features)
                 class_name = config.CLASSES[preds[0]]
                 confidence = np.max(probs[0])
-                callback(class_name, confidence)
+                # Передаём также вероятности обоих классов
+                callback(class_name, confidence, probs[0])
         except KeyboardInterrupt:
             print("\nОстановлено по запросу пользователя.")
         except Exception as e:

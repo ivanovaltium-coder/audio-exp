@@ -3,9 +3,8 @@ import argparse
 from recognition.recognizer import DroneRecognizer
 
 
-def print_result(class_name, confidence):
-    """Простой колбэк для вывода результатов в консоль."""
-    print(f"{class_name}: {confidence:.3f}")
+def print_result(class_name, confidence, probs):
+    print(f"pred: {class_name}, conf: {confidence:.3f}  [bg: {probs[0]:.3f}, drone: {probs[1]:.3f}]")
 
 
 def main():
