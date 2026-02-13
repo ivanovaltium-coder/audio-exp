@@ -10,9 +10,23 @@ def print_result(class_name, confidence):
 
 def main():
     parser = argparse.ArgumentParser(description='DronePrint — акустическая детекция дронов')
-    parser.add_argument('--file', type=str, help='Распознать файл вместо микрофона')
+    parser.add_argument('--file', type=str, help='Распознать аудиофайл (WAV) вместо микрофона')
+    parser.add_argument('--list-devices', action='store_true', help='Показать список аудиоустройств и выйти')
+    parser.add_argument('--device', type=int, default=None, help='Индекс устройства ввода для микрофона')
     args = parser.parse_args()
 
+    # Если нужно просто показать устройства
+    if args.list_devices:
+        # Создаём временный объект recognizer, чтобы воспользоваться его методом
+        # Но recognizer требует загруженную модель, а нам она не нужна для списка устройств.
+        # Можно вызвать метод класса напрямую, импортировав функцию из recognizer?
+        # Проще импортировать sounddevice здесь.
+        import sounddevice as sd
+        print(sd.query_devices())
+        print("\nУстройство ввода по умолчанию:", sd.default.device[0])
+        return
+
+    # Инициализируем распознаватель (загружает модель)
     recognizer = DroneRecognizer()
 
     if args.file:
@@ -20,7 +34,8 @@ def main():
         print(f"Файл: {args.file}")
         print(f"Результат: {class_name} (уверенность: {conf:.3f})")
     else:
-        recognizer.recognize_stream(print_result)
+        # Запуск непрерывного распознавания с микрофона
+        recognizer.recognize_stream(print_result, device=args.device)
 
 
 if __name__ == '__main__':

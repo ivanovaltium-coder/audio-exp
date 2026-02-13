@@ -11,6 +11,7 @@ class DroneClassifier:
     """
 
     def __init__(self):
+        # Инициализация модели SVM с вероятностным выходом и балансировкой классов
         self.model = SVC(kernel='linear', probability=True, class_weight='balanced')
         self.scaler = StandardScaler()
 
@@ -22,7 +23,9 @@ class DroneClassifier:
             X: np.ndarray, форма (n_samples, n_features) — признаки
             y: np.ndarray, форма (n_samples,) — метки (0 или 1)
         """
+        # Стандартизация признаков
         X_scaled = self.scaler.fit_transform(X)
+        # Обучение модели
         self.model.fit(X_scaled, y)
 
     def predict(self, X):
@@ -33,8 +36,8 @@ class DroneClassifier:
             X: np.ndarray, форма (n_samples, n_features) — признаки
 
         Возвращает:
-            preds: np.ndarray — предсказанные классы
-            probs: np.ndarray — вероятности для каждого класса
+            preds: np.ndarray — предсказанные классы (0 или 1)
+            probs: np.ndarray — вероятности для каждого класса, форма (n_samples, 2)
         """
         X_scaled = self.scaler.transform(X)
         preds = self.model.predict(X_scaled)

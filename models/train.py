@@ -12,30 +12,33 @@ import config
 
 def load_dataset(data_dir):
     """
-    Загружает все wav-файлы из папок no_drone/ и drone/,
-    извлекает признаки и возвращает X, y.
+    Загружает все WAV-файлы из подпапок no_drone/ и drone/,
+    извлекает признаки и возвращает матрицу X и вектор меток y.
     """
-    X, y = [], []
+    X = []
+    y = []
 
-    # класс 0: фон (no_drone)
-    for file in glob.glob(os.path.join(data_dir, 'no_drone', '*.wav')):
+    # Класс 0: фон (no_drone)
+    no_drone_path = os.path.join(data_dir, 'no_drone', '*.wav')
+    for file_path in glob.glob(no_drone_path):
         try:
-            audio, sr = librosa.load(file, sr=config.SAMPLE_RATE)
-            feats = extract_features(audio, sr)
-            X.append(feats)
+            audio, sr = librosa.load(file_path, sr=config.SAMPLE_RATE)
+            features = extract_features(audio, sr)
+            X.append(features)
             y.append(0)
         except Exception as e:
-            print(f"Ошибка при обработке {file}: {e}")
+            print(f"Ошибка при обработке {file_path}: {e}")
 
-    # класс 1: дрон (drone)
-    for file in glob.glob(os.path.join(data_dir, 'drone', '*.wav')):
+    # Класс 1: дрон (drone)
+    drone_path = os.path.join(data_dir, 'drone', '*.wav')
+    for file_path in glob.glob(drone_path):
         try:
-            audio, sr = librosa.load(file, sr=config.SAMPLE_RATE)
-            feats = extract_features(audio, sr)
-            X.append(feats)
+            audio, sr = librosa.load(file_path, sr=config.SAMPLE_RATE)
+            features = extract_features(audio, sr)
+            X.append(features)
             y.append(1)
         except Exception as e:
-            print(f"Ошибка при обработке {file}: {e}")
+            print(f"Ошибка при обработке {file_path}: {e}")
 
     return np.array(X), np.array(y)
 
@@ -48,31 +51,44 @@ def main():
 
     print("Загрузка датасета...")
     X, y = load_dataset(args.data_dir)
-    print(f"Загружено {len(X)} сэмплов: {np.sum(y == 0)} фона, {np.sum(y == 1)} дронов.")
 
     if len(X) == 0:
-        print("Нет данных для обучения. Проверьте путь к data_dir.")
+        print("Не найдено ни одного аудиофайла. Проверьте содержимое data_dir.")
         return
 
-    # Разделяем на обучающую и тестовую выборки
+    n_no_drone = np.sum(y == 0)
+    n_drone = np.sum(y == 1)
+    print(f"Загружено {len(X)} сэмплов: {n_no_drone} фона, {n_drone} дронов.")
+
+    # Разделение на обучающую и тестовую выборки (80/20) с сохранением пропорций классов
     X_train, X_test, y_train, y_test = train_test_split(
         X, y, test_size=0.2, random_state=42, stratify=y
     )
 
-    # Обучаем классификатор
+    # Обучение классификатора
     clf = DroneClassifier()
     clf.train(X_train, y_train)
 
-    # Оценка на тесте
-    _, probs = clf.predict(X_test)
-    preds = np.argmax(probs, axis=1)
+    # Оценка на тестовой выборке
+    preds, probs = clf.predict(X_test)
     accuracy = np.mean(preds == y_test)
     print(f"Точность на тестовой выборке: {accuracy:.3f}")
 
-    # Сохраняем модель
+    # Дополнительно: выведем уверенность для правильно и неправильно классифицированных
+    if len(y_test) > 0:
+        print("\nПримеры предсказаний:")
+        for i in range(min(5, len(y_test))):
+            true_class = config.CLASSES[y_test[i]]
+            pred_class = config.CLASSES[preds[i]]
+            confidence = np.max(probs[i])
+            print(f"  Истина: {true_class}, предсказание: {pred_class}, уверенность: {confidence:.3f}")
+
+    # Создание папки для сохранения модели, если её нет
     os.makedirs(os.path.dirname(config.MODEL_PATH), exist_ok=True)
+
+    # Сохранение модели и scaler
     clf.save(config.MODEL_PATH, config.SCALER_PATH)
-    print(f"Модель сохранена в {config.MODEL_PATH}")
+    print(f"\nМодель сохранена в {config.MODEL_PATH}")
     print(f"Scaler сохранён в {config.SCALER_PATH}")
 
 

@@ -13,11 +13,15 @@ class DroneRecognizer:
     """
 
     def __init__(self):
+        """Инициализация: загрузка модели и scaler."""
         self.classifier = DroneClassifier.load(config.MODEL_PATH, config.SCALER_PATH)
 
     def recognize_file(self, file_path):
         """
         Распознаёт дрон в аудиофайле.
+
+        Параметры:
+            file_path: str — путь к WAV-файлу.
 
         Возвращает:
             class_name: str — название класса ('background' или 'drone')
@@ -33,25 +37,38 @@ class DroneRecognizer:
     def recognize_stream(self, callback, device=None):
         """
         Запускает непрерывное распознавание с микрофона.
+        Для каждого окна длительностью config.WINDOW_SEC вызывает callback.
 
         Параметры:
-            callback: функция, которая будет вызвана для каждого окна.
-                      Принимает (class_name, confidence).
+            callback: функция, принимающая (class_name, confidence).
             device: индекс устройства микрофона (если нужно выбрать конкретный).
         """
-        import sounddevice as sd
         from audio.recorder import record_audio
 
         print(f"Прослушивание... (окно {config.WINDOW_SEC} сек, частота {config.SAMPLE_RATE} Гц)")
+        if device is not None:
+            print(f"Используется устройство ввода: {device}")
         print("Нажмите Ctrl+C для остановки.")
 
         try:
             while True:
-                audio = record_audio(duration=config.WINDOW_SEC, samplerate=config.SAMPLE_RATE)
+                audio = record_audio(
+                    duration=config.WINDOW_SEC,
+                    samplerate=config.SAMPLE_RATE,
+                    device=device
+                )
                 features = extract_features(audio, config.SAMPLE_RATE).reshape(1, -1)
                 preds, probs = self.classifier.predict(features)
                 class_name = config.CLASSES[preds[0]]
                 confidence = np.max(probs[0])
                 callback(class_name, confidence)
         except KeyboardInterrupt:
-            print("\nОстановлено.")
+            print("\nОстановлено по запросу пользователя.")
+        except Exception as e:
+            print(f"\nОшибка при работе с микрофоном: {e}")
+
+    def list_audio_devices(self):
+        """Выводит список доступных аудиоустройств (для справки)."""
+        import sounddevice as sd
+        print(sd.query_devices())
+        print("\nУстройство ввода по умолчанию:", sd.default.device[0])
