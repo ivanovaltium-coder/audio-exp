@@ -1,4 +1,4 @@
-# models/train.py
+# models/train.py    python -m models.train --data_dir data/raw/ запуск обучения
 import os
 import argparse
 import glob
