@@ -34,41 +34,39 @@ class DroneRecognizer:
         confidence = np.max(probs[0])
         return class_name, confidence
 
-    def recognize_stream(self, callback, device=None, use_callback=False):
+    def recognize_stream(self, callback, device=None):
         """
         Запускает непрерывное распознавание с микрофона.
         Для каждого окна длительностью config.WINDOW_SEC вызывает callback.
 
         Параметры:
-            callback: функция, принимающая (class_name, confidence).
+            callback: функция, принимающая (class_name, confidence, probs).
             device: индекс устройства микрофона (если нужно выбрать конкретный).
-            use_callback: bool — использовать callback режим для минимальной задержки.
         """
         from audio.recorder import record_audio
 
         print(f"Прослушивание... (окно {config.WINDOW_SEC} сек, частота {config.SAMPLE_RATE} Гц)")
         if device is not None:
             print(f"Используется устройство ввода: {device}")
-        elif config.DEVICE_ID is not None:
-            print(f"Используется Device ID из конфига: {config.DEVICE_ID}")
         else:
             print("Поиск устройства Steinberg UR44C через PyAudio ASIO...")
         
-        if use_callback:
-            print("Режим: стандартный (PyAudio polling)")
-        else:
-            print("Режим: стандартный (PyAudio polling)")
-        
+        print("Режим: стандартный (PyAudio polling)")
         print("Нажмите Ctrl+C для остановки.")
 
         try:
             while True:
                 audio = record_audio(
                     duration=config.WINDOW_SEC,
-                    samplerate=config.SAMPLE_RATE,
-                    device_id=device,
-                    use_callback=use_callback
+                    sample_rate=config.SAMPLE_RATE,
+                    device_index=device
                 )
+                # Если запись многоканальная, берем первый канал
+                if audio.ndim > 1 and audio.shape[1] > 1:
+                    audio = audio[:, 0]
+                else:
+                    audio = audio.flatten()
+                    
                 features = extract_features(audio, config.SAMPLE_RATE).reshape(1, -1)
                 preds, probs = self.classifier.predict(features)
                 class_name = config.CLASSES[preds[0]]
