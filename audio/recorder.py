@@ -1,50 +1,79 @@
-import sounddevice as sd
+import pyaudio
 import numpy as np
 import time
 import config
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Tuple
 
 
-def list_asio_devices() -> List[Dict[str, Any]]:
+def get_pyaudio_instance():
+    return pyaudio.PyAudio()
+
+
+def list_all_devices_detailed() -> List[Dict[str, Any]]:
     """
-    Возвращает список устройств, которые могут работать в режиме низкой задержки (ASIO/Wasapi).
-    Ищем устройства с именем Steinberg.
+    Возвращает полный список всех устройств PyAudio с подробной информацией.
     """
+    p = get_pyaudio_instance()
     devices = []
-    print("\n=== ПОИСК УСТРОЙСТВ STEINBERG ===")
 
-    query_devices = sd.query_devices()
-    for i, dev in enumerate(query_devices):
-        # Ищем устройства Steinberg или те, у которых много входных каналов (>2)
-        is_steinberg = "steinberg" in dev['name'].lower() or "ur44" in dev['name'].lower()
-        has_many_channels = dev['max_input_channels'] >= 8
+    print("\n=== ПОЛНЫЙ СКАН УСТРОЙСТВ (PyAudio) ===")
 
-        if dev['max_input_channels'] > 0 and (is_steinberg or has_many_channels):
-            devices.append({
-                'index': i,
-                'name': dev['name'],
-                'channels': dev['max_input_channels'],
-                'hostapi': dev['hostapi'],
-                'default_samplerate': dev['default_samplerate']
-            })
-            print(
-                f"ID: {i} | {dev['name']} | Входов: {dev['max_input_channels']} | Частота: {dev['default_samplerate']}")
+    for i in range(p.get_device_count()):
+        try:
+            info = p.get_device_info_by_index(i)
+            # Нас интересуют только устройства с входами
+            if info['maxInputChannels'] > 0:
+                devices.append({
+                    'index': i,
+                    'name': info['name'],
+                    'channels': info['maxInputChannels'],
+                    'sample_rate': int(info['defaultSampleRate']),
+                    'host_api': p.get_host_api_info_by_index(info['hostApi'])['name']
+                })
+        except Exception:
+            continue
 
+    p.terminate()
     return devices
 
 
-def find_steinberg_device() -> Optional[int]:
-    """Находит индекс устройства Steinberg UR44C."""
-    devices = list_asio_devices()
-    for dev in devices:
-        if "steinberg" in dev['name'].lower() or "ur44" in dev['name'].lower():
-            # Предпочитаем устройство, которое поддерживает 8 каналов
-            if dev['channels'] >= 8:
-                return dev['index']
-    # Если 8 каналов не найдено явно, берем первое устройство Steinberg
-    if devices:
-        return devices[0]['index']
-    return None
+def find_best_device(target_channels: int = 8) -> Optional[Dict[str, Any]]:
+    """
+    Ищет устройство, которое поддерживает нужное количество каналов.
+    Приоритет: Steinberg в названии + макс каналы.
+    """
+    devices = list_all_devices_detailed()
+
+    if not devices:
+        return None
+
+    # 1. Сначала ищем устройство Steinberg с максимальным кол-вом каналов
+    steinberg_devices = [d for d in devices if 'steinberg' in d['name'].lower()]
+
+    best_device = None
+
+    # Пытаемся найти среди Steinberg то, у которого каналов >= target_channels
+    # Или просто максимум из доступных Steinberg
+    if steinberg_devices:
+        # Сортируем по количеству каналов (убывание)
+        steinberg_devices.sort(key=lambda x: x['channels'], reverse=True)
+        best_device = steinberg_devices[0]
+
+        if best_device['channels'] < target_channels:
+            print(
+                f"⚠️ Внимание: Лучшее устройство Steinberg '{best_device['name']}' имеет только {best_device['channels']} входов.")
+            print("   Возможно, драйвер ASIO не активен для Python, и мы видим только стерео-микшер Windows.")
+    else:
+        # Если Steinberg не найдено явно, ищем любое устройство с 8 каналами
+        multi_channel_devices = [d for d in devices if d['channels'] >= target_channels]
+        if multi_channel_devices:
+            best_device = multi_channel_devices[0]
+            print(f"⚠️ Устройство Steinberg не найдено явно. Выбрано многоканальное устройство: {best_device['name']}")
+        else:
+            # Берем первое попавшееся
+            best_device = devices[0]
+
+    return best_device
 
 
 def record_audio(
@@ -54,117 +83,131 @@ def record_audio(
         sample_rate: int = None
 ) -> np.ndarray:
     """
-    Записывает аудио через sounddevice (использует ASIO драйвер Steinberg).
+    Запись аудио через PyAudio.
     """
-    if duration is None: duration = config.RECORD_DURATION
-    if channels is None: channels = config.NUM_CHANNELS
-    if sample_rate is None: sample_rate = config.SAMPLE_RATE
+    if duration is None: duration = getattr(config, 'RECORD_DURATION', 5.0)
+    if channels is None: channels = getattr(config, 'NUM_CHANNELS', 8)
+    if sample_rate is None: sample_rate = getattr(config, 'SAMPLE_RATE', 48000)
 
-    # Автопоиск устройства, если индекс не передан
-    if device_index is None:
-        device_index = find_steinberg_device()
-        if device_index is None:
-            raise ValueError("Не найдено устройство Steinberg UR44C! Запустите --list-asio для проверки.")
+    p = get_pyaudio_instance()
 
-    # Проверка возможностей устройства
-    dev_info = sd.query_devices(device_index)
-    max_ch = dev_info['max_input_channels']
-
-    if channels > max_ch:
-        print(f"⚠️ Устройство поддерживает только {max_ch} каналов. Переключаюсь на {max_ch}.")
-        channels = max_ch
+    # Выбор устройства
+    if device_index is not None:
+        try:
+            dev_info = p.get_device_info_by_index(device_index)
+        except IOError:
+            raise ValueError(f"Устройство с индексом {device_index} не найдено")
     else:
-        print(f"✅ Запрос {channels} каналов поддержан устройством.")
+        dev_info = find_best_device(channels)
+        if not dev_info:
+            raise ValueError("Подходящее аудиоустройство не найдено")
 
-    print(f"\n🎙️ ЗАПИСЬ ЧЕРЕЗ SOUNDEVICE (ASIO режим)")
-    print(f"   Устройство: {dev_info['name']} (ID: {device_index})")
+    device_idx = dev_info['index']
+    max_ch = dev_info['channels']
+
+    # Корректировка каналов
+    if channels > max_ch:
+        print(f"⚠️ Запрошено {channels} каналов, но устройство поддерживает только {max_ch}.")
+        print(f"   Переключаюсь на {max_ch} каналов.")
+        channels = max_ch
+
+    print(f"🎙️ Запись: Устройство '{dev_info['name']}' (ID: {device_idx})")
     print(f"   Каналы: {channels}, Частота: {sample_rate} Гц, Длительность: {duration} сек")
+    print(f"   Host API: {dev_info['host_api']}")
 
     frames = []
+    audio_format = pyaudio.paInt16
+    chunk_size = 1024
 
-    def callback(indata, frames_count, time_info, status):
-        if status:
-            print(f"⚠️ Status: {status}")
-        frames.append(indata.copy())
-
+    stream = None
     try:
-        # Открываем поток с явным указанием устройства и параметров
-        with sd.InputStream(
-                samplerate=sample_rate,
-                device=device_index,
-                channels=channels,
-                dtype='float32',
-                blocksize=config.BUFFER_SIZE,
-                callback=callback
-        ):
-            print("   🟢 Запись началась...")
-            sd.sleep(int(duration * 1000))
-            print("   🔴 Запись завершена.")
+        stream = p.open(
+            format=audio_format,
+            channels=channels,
+            rate=sample_rate,
+            input=True,
+            input_device_index=device_idx,
+            frames_per_buffer=chunk_size
+        )
 
-        if not frames:
-            raise RuntimeError("Буфер пуст. Проверьте подключение микрофона.")
-
-        audio_data = np.concatenate(frames, axis=0)
-        return audio_data
+        print("   🟢 Запись началась...")
+        for _ in range(int(sample_rate / chunk_size * duration)):
+            data = stream.read(chunk_size, exception_on_overflow=False)
+            frames.append(data)
+        print("   🔴 Запись завершена.")
 
     except Exception as e:
         print(f"❌ Ошибка записи: {e}")
-        print("   Возможно, частота дискретизации занята другим приложением.")
-        print("   Попробуйте закрыть браузер, плеер или изменить SAMPLE_RATE в config.py.")
+        if stream: stream.stop_stream()
+        p.terminate()
         raise
+
+    finally:
+        if stream:
+            stream.stop_stream()
+            stream.close()
+        p.terminate()
+
+    # Конвертация в numpy
+    raw_data = b''.join(frames)
+    audio_array = np.frombuffer(raw_data, dtype=np.int16).astype(np.float32) / 32768.0
+    return audio_array.reshape(-1, channels)
 
 
 def check_microphone(device_index: Optional[int] = None, duration: float = 2.0):
-    """Проверка микрофона через sounddevice."""
     print("=" * 60)
-    print("ПРОВЕРКА МИКРОФОНА (SoundDevice + ASIO)")
+    print("ПРОВЕРКА МИКРОФОНА (PyAudio)")
     print("=" * 60)
 
-    if device_index is None:
-        device_index = find_steinberg_device()
-        if device_index is None:
-            print("❌ Устройство Steinberg не найдено.")
+    p = get_pyaudio_instance()
+
+    if device_index is not None:
+        try:
+            dev_info = p.get_device_info_by_index(device_index)
+        except:
+            print(f"❌ Устройство {device_index} не найдено")
+            return {"success": False}
+    else:
+        dev_info = find_best_device()
+        if not dev_info:
+            print("❌ Устройства не найдены")
             return {"success": False}
 
-    dev_info = sd.query_devices(device_index)
     print(f"\nУстройство: {dev_info['name']}")
-    print(f"Макс. входных каналов: {dev_info['max_input_channels']}")
+    print(f"Доступно входов: {dev_info['channels']}")
 
-    # Пробуем записать максимальное количество каналов (до 8)
-    test_channels = min(8, dev_info['max_input_channels'])
-    sample_rate = config.SAMPLE_RATE
+    # Пробуем записать столько каналов, сколько дает устройство (макс 8)
+    rec_channels = min(dev_info['channels'], 8)
+    sample_rate = int(dev_info['sample_rate'])
 
-    # Корректировка частоты, если устройство не поддерживает запрошенную
-    # (sounddevice обычно делает ресемплинг сам, но лучше быть осторожным)
-
-    print(f"\nТестовая запись ({duration} сек, {test_channels} кан.)... Говорите в микрофон!")
+    print(f"Тестовая запись ({duration} сек) на {rec_channels} кан./{sample_rate} Гц...")
+    print("Говорите в микрофон!")
 
     try:
         data = record_audio(
             duration=duration,
-            device_index=device_index,
-            channels=test_channels,
+            device_index=dev_info['index'],
+            channels=rec_channels,
             sample_rate=sample_rate
         )
 
-        # Анализируем первый канал (микрофон 1)
-        channel_1 = data[:, 0]
-        rms = np.sqrt(np.mean(channel_1 ** 2))
-        db_level = 20 * np.log10(rms + 1e-10)
-        peak = np.max(np.abs(channel_1))
-        peak_db = 20 * np.log10(peak + 1e-10)
+        # Анализируем первый канал
+        channel_0 = data[:, 0] if data.ndim > 1 else data
+        rms = np.sqrt(np.mean(channel_0 ** 2))
+        db = 20 * np.log10(rms + 1e-10)
 
-        print("\n" + "-" * 60)
-        print(f"РЕЗУЛЬТАТЫ (Канал 1):")
-        print(f"RMS: {db_level:.2f} дБ | Пик: {peak_db:.2f} дБ")
+        print("\n" + "-" * 40)
+        print(f"Уровень сигнала (RMS): {db:.2f} дБ")
 
-        if db_level > config.MIC_CHECK_THRESHOLD_DB:
+        if db > -40:
             print("✅ МИКРОФОН РАБОТАЕТ!")
-            return {"success": True, "db": db_level}
+            return {"success": True, "db": db, "channels": rec_channels}
         else:
-            print("❌ СИГНАЛ СЛИШКОМ ТИХИЙ. Проверьте Gain и +48V.")
-            return {"success": False, "db": db_level}
+            print("❌ ТИШИНА. Проверьте подключение и Gain.")
+            return {"success": False, "db": db}
 
     except Exception as e:
-        print(f"❌ Ошибка теста: {e}")
-        return {"success": False, "error": str(e)}
+        print(f"❌ Ошибка: {e}")
+        return {"success": False}
+    finally:
+        p.terminate()
