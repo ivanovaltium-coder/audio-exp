@@ -32,7 +32,7 @@ def main():
     # Если нужно проверить микрофон
     if args.check_mic:
         result = check_microphone(
-            device_id=args.device,
+            device=args.device,
             duration=args.mic_duration,
             verbose=True
         )

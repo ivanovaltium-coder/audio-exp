@@ -204,7 +204,7 @@ def check_microphone(device=None, duration=2.0, samplerate=None, verbose=True):
     Записывает короткий фрагмент и анализирует уровень сигнала.
     
     Параметры:
-        device: int или str — устройство ввода (по умолчанию None = системное по умолчанию).
+        device: int — ID устройства ввода (PyAudio device index).
         duration: float — длительность тестовой записи в секундах.
         samplerate: int — частота дискретизации. Если None, используется config.SAMPLE_RATE.
         verbose: bool — если True, выводит подробную информацию.
@@ -226,16 +226,18 @@ def check_microphone(device=None, duration=2.0, samplerate=None, verbose=True):
         
         # Информация об устройстве
         if device is not None:
+            p = pyaudio.PyAudio()
             try:
-                dev_info = sd.query_devices(device)
+                dev_info = p.get_device_info_by_index(device)
                 print(f"\nУстройство: {dev_info['name']}")
-                print(f"Тип: {'Ввод' if dev_info['max_input_channels'] > 0 else 'Вывод'}")
-                print(f"Каналы: {dev_info['max_input_channels']} входных / {dev_info['max_output_channels']} выходных")
-                print(f"Частота: {dev_info['default_samplerate']} Гц")
+                print(f"Тип: {'Ввод' if dev_info['maxInputChannels'] > 0 else 'Вывод'}")
+                print(f"Каналы: {dev_info['maxInputChannels']} входных / {dev_info['maxOutputChannels']} выходных")
+                print(f"Частота: {dev_info['defaultSampleRate']} Гц")
             except Exception as e:
                 print(f"Не удалось получить информацию об устройстве: {e}\n")
-                print("Попробуйте запустить: python main.py --list-devices")
-                print("для просмотра доступных устройств.")
+                print("Попробуйте запустить: python main.py --list-asio")
+                print("для просмотра доступных ASIO устройств.")
+                p.terminate()
                 return {
                     'working': False,
                     'rms_db': -100.0,
@@ -243,16 +245,37 @@ def check_microphone(device=None, duration=2.0, samplerate=None, verbose=True):
                     'message': f'Ошибка устройства: {e}',
                     'audio_data': np.array([])
                 }
+            p.terminate()
         else:
-            default_device = sd.default.device[0]
-            if default_device is not None:
+            if config.USE_ASIO:
+                # Пытаемся найти ASIO устройство
+                device = find_asio_device(config.ASIO_DEVICE_NAME)
+                if device is not None:
+                    p = pyaudio.PyAudio()
+                    dev_info = p.get_device_info_by_index(device)
+                    print(f"\nНайдено ASIO устройство: {dev_info['name']} (ID: {device})")
+                    p.terminate()
+                else:
+                    print("\n⚠ ASIO устройство не найдено.")
+                    print("Попробуйте запустить: python main.py --list-asio")
+                    print("и указать устройство явно: python main.py --check-mic --device <ID>")
+                    return {
+                        'working': False,
+                        'rms_db': -100.0,
+                        'peak_db': -100.0,
+                        'message': 'ASIO устройство не найдено',
+                        'audio_data': np.array([])
+                    }
+            else:
+                p = pyaudio.PyAudio()
                 try:
-                    dev_info = sd.query_devices(default_device)
-                    print(f"\nИспользуется устройство по умолчанию: {dev_info['name']}")
+                    default_dev = p.get_default_input_device_info()
+                    print(f"\nИспользуется устройство по умолчанию: {default_dev['name']}")
                 except Exception:
                     print("\n⚠ Устройство по умолчанию не найдено или недоступно.")
-                    print("Попробуйте запустить: python main.py --list-devices")
+                    print("Попробуйте запустить: python main.py --list-asio")
                     print("и указать устройство явно: python main.py --check-mic --device <ID>")
+                    p.terminate()
                     return {
                         'working': False,
                         'rms_db': -100.0,
@@ -260,17 +283,7 @@ def check_microphone(device=None, duration=2.0, samplerate=None, verbose=True):
                         'message': 'Устройство по умолчанию не найдено',
                         'audio_data': np.array([])
                     }
-            else:
-                print("\n⚠ Устройство ввода по умолчанию не найдено!")
-                print("Попробуйте запустить: python main.py --list-devices")
-                print("и указать устройство явно: python main.py --check-mic --device <ID>")
-                return {
-                    'working': False,
-                    'rms_db': -100.0,
-                    'peak_db': -100.0,
-                    'message': 'Устройство ввода по умолчанию не найдено',
-                    'audio_data': np.array([])
-                }
+                p.terminate()
     
     # Запись тестового фрагмента (всегда 1 канал для проверки микрофона)
     if verbose:
@@ -284,6 +297,15 @@ def check_microphone(device=None, duration=2.0, samplerate=None, verbose=True):
         use_single_channel=True,
         active_channel=0
     )
+    
+    if len(recording) == 0:
+        return {
+            'working': False,
+            'rms_db': -100.0,
+            'peak_db': -100.0,
+            'message': 'Не удалось записать аудио',
+            'audio_data': np.array([])
+        }
     
     # Анализ уровня сигнала
     # Вычисляем RMS (среднеквадратичное значение)
@@ -336,68 +358,80 @@ def check_microphone(device=None, duration=2.0, samplerate=None, verbose=True):
 
 
 def list_devices():
-    """Выводит список доступных аудиоустройств с информацией о Host API."""
+    """Выводит список доступных аудиоустройств с информацией о Host API через PyAudio."""
     print("=" * 70)
     print("ДОСТУПНЫЕ HOST API:")
     print("=" * 70)
     
-    hostapis = sd.query_hostapis()
-    # Обрабатываем как список словарей, так и tuple
-    if isinstance(hostapis, (list, tuple)):
-        api_list = hostapis
-    else:
-        api_list = [hostapis]
+    p = pyaudio.PyAudio()
     
-    for idx, api in enumerate(api_list):
-        print(f"\nID {idx}: {api['name']}")
-        print(f"   Устройств: {len(api['devices'])}")
+    # Выводим информацию о хост-API
+    for i in range(p.get_host_api_count()):
+        api_info = p.get_host_api_info_by_index(i)
+        print(f"\nID {i}: {api_info['name']}")
+        print(f"   Устройств: {api_info['deviceCount']}")
         
         # Показываем устройства в этом API
-        for dev_idx in api['devices']:
-            dev = sd.query_devices(dev_idx)
+        for j in range(api_info['deviceCount']):
+            dev_idx = api_info['devices'][j]
+            dev = p.get_device_info_by_index(dev_idx)
             print(f"   └─ ID {dev_idx}: {dev['name']}")
-            print(f"      Входов: {dev['max_input_channels']}, Выходов: {dev['max_output_channels']}")
-            if 'ASIO' in api['name'].upper() and dev['max_input_channels'] >= 4:
+            print(f"      Входов: {dev['maxInputChannels']}, Выходов: {dev['maxOutputChannels']}")
+            if 'ASIO' in api_info['name'].upper() and dev['maxInputChannels'] >= 4:
                 print(f"      🎯 ПОДХОДИТ ДЛЯ ПЕЛЕНГАЦИИ (≥4 каналов)")
     
+    # Устройства по умолчанию
     print("\n" + "=" * 70)
     print("УСТРОЙСТВА ПО УМОЛЧАНИЮ:")
     print("=" * 70)
-    default_input, default_output = sd.default.device
-    print(f"Ввод:  {default_input}")
-    print(f"Вывод: {default_output}")
+    
+    try:
+        default_input = p.get_default_input_device_info()
+        print(f"Ввод:  ID {default_input['index']} - {default_input['name']}")
+    except Exception:
+        print("Ввод:  не настроено")
+    
+    try:
+        default_output = p.get_default_output_device_info()
+        print(f"Вывод: ID {default_output['index']} - {default_output['name']}")
+    except Exception:
+        print("Вывод: не настроено")
+    
+    p.terminate()
 
 
 def list_asio_devices():
-    """Выводит только ASIO устройства для записи с UR44C."""
+    """Выводит только ASIO устройства для записи с UR44C через PyAudio."""
     print("=" * 70)
     print("ASIO УСТРОЙСТВА (рекомендуется для Steinberg UR44C):")
     print("=" * 70)
     
+    p = pyaudio.PyAudio()
     found = False
-    hostapis = sd.query_hostapis()
-    # Обрабатываем как список словарей, так и tuple
-    if isinstance(hostapis, (list, tuple)):
-        api_list = hostapis
-    else:
-        api_list = [hostapis]
     
-    for host_api_idx, host_api in enumerate(api_list):
-        if 'ASIO' in host_api['name'].upper():
-            print(f"\nHost API: {host_api['name']}")
+    # Ищем ASIO API
+    asio_api_idx = -1
+    for i in range(p.get_host_api_count()):
+        api_info = p.get_host_api_info_by_index(i)
+        if "ASIO" in api_info['name'].upper():
+            asio_api_idx = i
+            print(f"\nHost API: {api_info['name']}")
             print("-" * 50)
             
-            for dev_idx in host_api['devices']:
-                dev_info = sd.query_devices(dev_idx)
-                if dev_info['max_input_channels'] > 0:
+            # Показываем все устройства в ASIO API
+            for j in range(api_info['deviceCount']):
+                dev_idx = api_info['devices'][j]
+                dev_info = p.get_device_info_by_index(dev_idx)
+                
+                if dev_info['maxInputChannels'] > 0:
                     found = True
                     print(f"ID {dev_idx}: {dev_info['name']}")
-                    print(f"   Входных каналов: {dev_info['max_input_channels']}")
-                    print(f"   Частота: {dev_info['default_samplerate']} Гц")
+                    print(f"   Входных каналов: {dev_info['maxInputChannels']}")
+                    print(f"   Частота: {dev_info['defaultSampleRate']} Гц")
                     
-                    if dev_info['max_input_channels'] >= 8:
+                    if dev_info['maxInputChannels'] >= 8:
                         print(f"   🎯 ПОЛНАЯ ПОДДЕРЖКА UR44C (8 каналов)")
-                    elif dev_info['max_input_channels'] >= 4:
+                    elif dev_info['maxInputChannels'] >= 4:
                         print(f"   ✓ ПОДХОДИТ ДЛЯ ПЕЛЕНГАЦИИ (4+ канала)")
     
     if not found:
@@ -405,6 +439,7 @@ def list_asio_devices():
         print("Проверьте установку драйверов Steinberg UR44C.")
         print("Убедитесь, что устройство не занято другой программой (DAW, VoiceMeeter).")
     
+    p.terminate()
     print("=" * 70)
 
 
