@@ -233,14 +233,44 @@ def check_microphone(device=None, duration=2.0, samplerate=None, verbose=True):
                 print(f"Каналы: {dev_info['max_input_channels']} входных / {dev_info['max_output_channels']} выходных")
                 print(f"Частота: {dev_info['default_samplerate']} Гц")
             except Exception as e:
-                print(f"Не удалось получить информацию об устройстве: {e}")
+                print(f"Не удалось получить информацию об устройстве: {e}\n")
+                print("Попробуйте запустить: python main.py --list-devices")
+                print("для просмотра доступных устройств.")
+                return {
+                    'working': False,
+                    'rms_db': -100.0,
+                    'peak_db': -100.0,
+                    'message': f'Ошибка устройства: {e}',
+                    'audio_data': np.array([])
+                }
         else:
             default_device = sd.default.device[0]
             if default_device is not None:
-                dev_info = sd.query_devices(default_device)
-                print(f"\nИспользуется устройство по умолчанию: {dev_info['name']}")
+                try:
+                    dev_info = sd.query_devices(default_device)
+                    print(f"\nИспользуется устройство по умолчанию: {dev_info['name']}")
+                except Exception:
+                    print("\n⚠ Устройство по умолчанию не найдено или недоступно.")
+                    print("Попробуйте запустить: python main.py --list-devices")
+                    print("и указать устройство явно: python main.py --check-mic --device <ID>")
+                    return {
+                        'working': False,
+                        'rms_db': -100.0,
+                        'peak_db': -100.0,
+                        'message': 'Устройство по умолчанию не найдено',
+                        'audio_data': np.array([])
+                    }
             else:
-                print("\nУстройство ввода по умолчанию не найдено!")
+                print("\n⚠ Устройство ввода по умолчанию не найдено!")
+                print("Попробуйте запустить: python main.py --list-devices")
+                print("и указать устройство явно: python main.py --check-mic --device <ID>")
+                return {
+                    'working': False,
+                    'rms_db': -100.0,
+                    'peak_db': -100.0,
+                    'message': 'Устройство ввода по умолчанию не найдено',
+                    'audio_data': np.array([])
+                }
     
     # Запись тестового фрагмента (всегда 1 канал для проверки микрофона)
     if verbose:
