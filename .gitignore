@@ -1,33 +1,14 @@
-```
-# Python
-__pycache__/
+```gitignore
+# Compiled Python files
 *.pyc
-*.pyo
-*.pyd
+__pycache__/
 
-# Dependencies
-venv/
-.venv/
+# Models and pickled files
+models/saved_models/*.joblib
+models/saved_models/*.pkl
+
+# Environment files
 .env
 .env.local
 *.env.*
-
-# Logs
-*.log
-
-# Coverage
-.coverage
-coverage/
-htmlcov/
-
-# MyPy
-.mypy_cache/
-
-# Pytest
-.pytest_cache/
-
-# Distribution / packaging
-dist/
-build/
-*.egg-info/
 ```
