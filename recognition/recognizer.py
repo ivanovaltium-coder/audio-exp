@@ -49,13 +49,15 @@ class DroneRecognizer:
         print(f"Прослушивание... (окно {config.WINDOW_SEC} сек, частота {config.SAMPLE_RATE} Гц)")
         if device is not None:
             print(f"Используется устройство ввода: {device}")
-        elif config.USE_ASIO:
-            print(f"Используется ASIO драйвер: {config.ASIO_DEVICE_NAME}")
+        elif config.DEVICE_ID is not None:
+            print(f"Используется Device ID из конфига: {config.DEVICE_ID}")
+        else:
+            print("Поиск устройства Steinberg UR44C через PyAudio ASIO...")
         
         if use_callback:
-            print("Режим: callback (минимальная задержка)")
+            print("Режим: стандартный (PyAudio polling)")
         else:
-            print("Режим: стандартный")
+            print("Режим: стандартный (PyAudio polling)")
         
         print("Нажмите Ctrl+C для остановки.")
 
@@ -64,7 +66,7 @@ class DroneRecognizer:
                 audio = record_audio(
                     duration=config.WINDOW_SEC,
                     samplerate=config.SAMPLE_RATE,
-                    device=device,
+                    device_id=device,
                     use_callback=use_callback
                 )
                 features = extract_features(audio, config.SAMPLE_RATE).reshape(1, -1)
