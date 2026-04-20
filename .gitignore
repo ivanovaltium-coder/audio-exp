@@ -1,0 +1,25 @@
+# Папка с сырыми аудиоданными (датасет)
+data/raw/
+
+# Виртуальное окружение Python
+.venv/
+venv/
+env/
+
+# Файлы кэша Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Папка с обученными моделями (большие бинарные файлы)
+models/saved_models/*.joblib
+models/saved_models/*.h5
+models/saved_models/*.pkl
+
+# Файлы IDE
+.idea/
+.vscode/
+
+# Временные файлы
+*.tmp
+*.log
