@@ -4,6 +4,29 @@ import numpy as np
 import config
 
 
+def get_device_channels(device=None):
+    """
+    Определяет максимальное количество входных каналов устройства.
+    
+    Параметры:
+        device: int или str — устройство ввода (по умолчанию None = системное по умолчанию).
+    
+    Возвращает:
+        int — максимальное количество входных каналов.
+    """
+    if device is None:
+        device = sd.default.device[0]
+    
+    if device is None:
+        return 1
+    
+    try:
+        dev_info = sd.query_devices(device)
+        return max(1, dev_info['max_input_channels'])
+    except Exception:
+        return 1
+
+
 def record_audio(duration=None, samplerate=None, device=None, channels=None, use_single_channel=None, active_channel=None):
     """
     Записывает аудио с микрофона.
@@ -29,13 +52,21 @@ def record_audio(duration=None, samplerate=None, device=None, channels=None, use
         duration = config.WINDOW_SEC
     if samplerate is None:
         samplerate = config.SAMPLE_RATE
-    if channels is None:
-        channels = config.NUM_CHANNELS
     if use_single_channel is None:
         use_single_channel = config.USE_SINGLE_CHANNEL
     if active_channel is None:
         active_channel = config.ACTIVE_CHANNEL
-
+    
+    # Определяем реальное количество каналов устройства
+    max_channels = get_device_channels(device)
+    
+    # Если channels не указан, используем конфиг, но не больше чем поддерживает устройство
+    if channels is None:
+        channels = min(config.NUM_CHANNELS, max_channels)
+    else:
+        # Ограничиваем количеством каналов устройства
+        channels = min(channels, max_channels)
+    
     # Запись с микрофона
     recording = sd.rec(
         int(duration * samplerate),
@@ -102,7 +133,7 @@ def check_microphone(device=None, duration=2.0, samplerate=None, verbose=True):
             else:
                 print("\nУстройство ввода по умолчанию не найдено!")
     
-    # Запись тестового фрагмента
+    # Запись тестового фрагмента (всегда 1 канал для проверки микрофона)
     if verbose:
         print(f"\nЗапись {duration} сек... (говорите в микрофон)")
     
@@ -110,9 +141,9 @@ def check_microphone(device=None, duration=2.0, samplerate=None, verbose=True):
         duration=duration,
         samplerate=samplerate,
         device=device,
-        channels=config.NUM_CHANNELS,
-        use_single_channel=config.USE_SINGLE_CHANNEL,
-        active_channel=config.ACTIVE_CHANNEL
+        channels=1,  # Для проверки используем 1 канал
+        use_single_channel=True,
+        active_channel=0
     )
     
     # Анализ уровня сигнала
@@ -169,3 +200,9 @@ def list_devices():
     """Выводит список доступных аудиоустройств."""
     print(sd.query_devices())
     print("\nУстройство ввода по умолчанию:", sd.default.device[0])
+
+
+if __name__ == "__main__":
+    # Тестовый запуск для проверки микрофона
+    result = check_microphone(verbose=True)
+    print(f"\nРезультат: {result['message']}")
