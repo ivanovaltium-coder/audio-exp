@@ -1,3 +1,33 @@
-(audio/recorder.py is a source file, so no need to ignore it)
+```
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
 
-Nothing to ignore based on the provided changes.
+# Dependencies
+venv/
+.venv/
+.env
+.env.local
+*.env.*
+
+# Logs
+*.log
+
+# Coverage
+.coverage
+coverage/
+htmlcov/
+
+# MyPy
+.mypy_cache/
+
+# Pytest
+.pytest_cache/
+
+# Distribution / packaging
+dist/
+build/
+*.egg-info/
+```
