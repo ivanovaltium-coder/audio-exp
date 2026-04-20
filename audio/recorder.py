@@ -15,46 +15,49 @@ def get_pyaudio_instance():
 
 def list_asio_devices() -> List[Dict[str, Any]]:
     """
-    Возвращает список устройств, использующих хост-API ASIO.
-    Это критически важно для работы со звуковой картой Steinberg UR44C.
+    Возвращает список всех устройств ввода с большим количеством каналов.
+    В Windows с драйвером Steinberg они часто отображаются как обычные устройства,
+    а не как отдельный хост-API 'ASIO' внутри PyAudio.
     """
     p = get_pyaudio_instance()
-    asio_devices = []
+    found_devices = []
 
-    # Находим индекс хост-API ASIO
-    asio_host_api_idx = -1
-    for i in range(p.get_host_api_count()):
-        api_info = p.get_host_api_info_by_index(i)
-        if "ASIO" in api_info['name'].upper():
-            asio_host_api_idx = i
-            break
+    print("Сканирование всех устройств PyAudio...")
 
-    if asio_host_api_idx == -1:
-        print("⚠️ Предупреждение: Драйвер ASIO не найден в системе.")
-        print("   Убедитесь, что установлен драйвер Yamaha Steinberg USB ASIO.")
-        p.terminate()
-        return []
-
-    # Перебираем все устройства и ищем те, что принадлежат ASIO
     for i in range(p.get_device_count()):
-        dev_info = p.get_device_info_by_index(i)
-        if dev_info['hostApi'] == asio_host_api_idx:
-            # Нам нужны только устройства с входными каналами
+        try:
+            dev_info = p.get_device_info_by_index(i)
+
+            # Нас интересуют только устройства с входными каналами
             if dev_info['maxInputChannels'] > 0:
-                asio_devices.append({
-                    'index': i,
-                    'name': dev_info['name'],
-                    'channels': dev_info['maxInputChannels'],
-                    'default_sample_rate': int(dev_info['defaultSampleRate'])
-                })
+                name = dev_info['name']
+                channels = dev_info['maxInputChannels']
+                host_api_idx = dev_info['hostApi']
+                host_api_name = p.get_host_api_info_by_index(host_api_idx)['name']
+
+                # Фильтр: ищем Steinberg или устройства с 4+ каналами (для будущего)
+                # Или просто выводим все, если нужно
+                is_steinberg = "steinberg" in name.lower() or "ur44" in name.lower()
+
+                # Добавляем в список, если это Steinberg ИЛИ если каналов >= 4 (на всякий случай)
+                if is_steinberg or channels >= 4:
+                    found_devices.append({
+                        'index': i,
+                        'name': name,
+                        'channels': channels,
+                        'default_sample_rate': int(dev_info['defaultSampleRate']),
+                        'host_api': host_api_name
+                    })
+        except Exception as e:
+            continue
 
     p.terminate()
-    return asio_devices
+    return found_devices
 
 
 def find_asio_device(device_name: Optional[str] = None) -> Optional[Dict[str, Any]]:
     """
-    Ищет устройство ASIO по имени или возвращает первое доступное.
+    Ищет устройство по имени или возвращает первое подходящее (Steinberg).
     """
     devices = list_asio_devices()
     if not devices:
@@ -65,8 +68,7 @@ def find_asio_device(device_name: Optional[str] = None) -> Optional[Dict[str, An
             if device_name.lower() in dev['name'].lower():
                 return dev
 
-    # Если имя не указано или не найдено, возвращаем первое подходящее устройство
-    # Обычно это и есть Steinberg UR44C, если она одна подключена
+    # Если имя не найдено, возвращаем первое устройство из списка (обычно это и есть карта)
     return devices[0]
 
 
