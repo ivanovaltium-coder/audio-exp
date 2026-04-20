@@ -1,14 +1,51 @@
-```gitignore
 # Compiled Python files
-*.pyc
 __pycache__/
+*.py[cod]
+*$py.class
 
-# Models and pickled files
+# Virtual environment
+.venv/
+venv/
+env/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Project data (audio recordings, datasets)
+data/
+datasets/
+
+# Trained models and serialized objects
 models/saved_models/*.joblib
 models/saved_models/*.pkl
+models/saved_models/*.h5
+models/saved_models/*.hdf5
+*.joblib
+*.pkl
 
-# Environment files
-.env
-.env.local
-*.env.*
-```
+# Logs and temporary files
+*.log
+*.tmp
+*.temp
+
+# Jupyter notebooks checkpoints
+.ipynb_checkpoints/
+
+# Python eggs and wheels
+*.egg-info/
+dist/
+build/
+*.whl
+
+# Coverage reports
+.coverage
+htmlcov/
+.pytest_cache/
+.mypy_cache/
