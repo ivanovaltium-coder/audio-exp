@@ -1,58 +1,65 @@
-# models/classifier.py
-from sklearn.svm import SVC
-from sklearn.preprocessing import StandardScaler
 import joblib
+import numpy as np
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.preprocessing import StandardScaler
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import classification_report, accuracy_score
+import os
+from typing import Tuple, List  # <--- ДОБАВЛЕНО
 
 
 class DroneClassifier:
-    """
-    Классификатор для детекции дронов на основе MFCC.
-    Использует SVM с линейным ядром и стандартизацию признаков.
-    """
-
     def __init__(self):
-        # Инициализация модели SVM с вероятностным выходом и балансировкой классов
-        self.model = SVC(kernel='linear', probability=True, class_weight='balanced')
+        self.model = RandomForestClassifier(n_estimators=100, random_state=42, max_depth=10)
         self.scaler = StandardScaler()
+        self.is_trained = False
 
-    def train(self, X, y):
-        """
-        Обучает классификатор.
+    def train(self, X: np.ndarray, y: np.ndarray):
+        if len(X) == 0:
+            raise ValueError("Нет данных для обучения!")
 
-        Параметры:
-            X: np.ndarray, форма (n_samples, n_features) — признаки
-            y: np.ndarray, форма (n_samples,) — метки (0 или 1)
-        """
-        # Стандартизация признаков
+        print(f"Нормализация данных ({len(X)} образцов)...")
         X_scaled = self.scaler.fit_transform(X)
-        # Обучение модели
-        self.model.fit(X_scaled, y)
 
-    def predict(self, X):
-        """
-        Предсказывает класс и вероятности.
+        X_train, X_test, y_train, y_test = train_test_split(
+            X_scaled, y, test_size=0.2, random_state=42, stratify=y
+        )
 
-        Параметры:
-            X: np.ndarray, форма (n_samples, n_features) — признаки
+        print("Обучение модели Random Forest...")
+        self.model.fit(X_train, y_train)
+        self.is_trained = True
 
-        Возвращает:
-            preds: np.ndarray — предсказанные классы (0 или 1)
-            probs: np.ndarray — вероятности для каждого класса, форма (n_samples, 2)
-        """
-        X_scaled = self.scaler.transform(X)
-        preds = self.model.predict(X_scaled)
-        probs = self.model.predict_proba(X_scaled)
-        return preds, probs
+        y_pred = self.model.predict(X_test)
+        print("\nРезультаты на тестовой выборке:")
+        print(classification_report(y_test, y_pred, target_names=['Not Drone', 'Drone']))
+        print(f"Accuracy: {accuracy_score(y_test, y_pred):.4f}")
 
-    def save(self, model_path, scaler_path):
-        """Сохраняет модель и scaler в файлы."""
+        return self.model
+
+    def predict(self, features: np.ndarray) -> Tuple[int, float]:
+        if not self.is_trained:
+            raise RuntimeError("Модель не обучена!")
+
+        if features.ndim == 1:
+            features = features.reshape(1, -1)
+
+        features_scaled = self.scaler.transform(features)
+        prediction = self.model.predict(features_scaled)[0]
+        probability = np.max(self.model.predict_proba(features_scaled)[0])
+
+        return prediction, probability
+
+    def save(self, model_path: str, scaler_path: str):
+        os.makedirs(os.path.dirname(model_path), exist_ok=True)
         joblib.dump(self.model, model_path)
         joblib.dump(self.scaler, scaler_path)
+        print(f"Модель сохранена: {model_path}")
+        print(f"Скалер сохранен: {scaler_path}")
 
-    @classmethod
-    def load(cls, model_path, scaler_path):
-        """Загружает модель и scaler из файлов."""
-        obj = cls()
+    @staticmethod
+    def load(model_path: str, scaler_path: str) -> 'DroneClassifier':
+        obj = DroneClassifier()
         obj.model = joblib.load(model_path)
         obj.scaler = joblib.load(scaler_path)
+        obj.is_trained = True
         return obj
