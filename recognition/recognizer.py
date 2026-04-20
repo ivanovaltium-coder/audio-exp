@@ -1,85 +1,30 @@
-# recognition/recognizer.py
 import numpy as np
-import librosa
-from features.extractor import extract_features
-from models.classifier import DroneClassifier
+import joblib
 import config
+from models.classifier import DroneClassifier
 
 
 class DroneRecognizer:
-    """
-    Основной класс для распознавания дронов.
-    Загружает обученную модель и scaler, может работать с файлами или микрофоном.
-    """
+    def __init__(self, model_path: str = None, scaler_path: str = None):
+        self.model_path = model_path or config.MODEL_PATH
+        self.scaler_path = scaler_path or config.SCALER_PATH
 
-    def __init__(self):
-        """Инициализация: загрузка модели и scaler."""
-        self.classifier = DroneClassifier.load(config.MODEL_PATH, config.SCALER_PATH)
+        # Загрузка модели и скалера
+        self.classifier = DroneClassifier.load(self.model_path, self.scaler_path)
+        print(f"✅ Модель загружена: {self.model_path}")
 
-    def recognize_file(self, file_path):
+    def predict(self, audio_data: np.ndarray) -> tuple:
         """
-        Распознаёт дрон в аудиофайле.
-
-        Параметры:
-            file_path: str — путь к WAV-файлу.
-
-        Возвращает:
-            class_name: str — название класса ('background' или 'drone')
-            confidence: float — уверенность (0..1)
+        Принимает аудио данные (numpy array), извлекает признаки и возвращает предсказание.
+        audio_data: 1D массив (моно)
         """
-        audio, sr = librosa.load(file_path, sr=config.SAMPLE_RATE)
-        features = extract_features(audio, sr).reshape(1, -1)
-        preds, probs = self.classifier.predict(features)
-        class_name = config.CLASSES[preds[0]]
-        confidence = np.max(probs[0])
-        return class_name, confidence
+        if audio_data.ndim != 1:
+            raise ValueError("Ожидается моно аудио сигнал (1D массив)")
 
-    def recognize_stream(self, callback, device=None, use_callback=False):
-        """
-        Запускает непрерывное распознавание с микрофона.
-        Для каждого окна длительностью config.WINDOW_SEC вызывает callback.
+        # Извлечение признаков (MFCC и др.)
+        features = self.classifier.extract_features(audio_data, config.SAMPLE_RATE)
 
-        Параметры:
-            callback: функция, принимающая (class_name, confidence).
-            device: индекс устройства микрофона (если нужно выбрать конкретный).
-            use_callback: bool — использовать callback режим для минимальной задержки.
-        """
-        from audio.recorder import record_audio
+        # Классификация
+        prediction, probability = self.classifier.predict(features)
 
-        print(f"Прослушивание... (окно {config.WINDOW_SEC} сек, частота {config.SAMPLE_RATE} Гц)")
-        if device is not None:
-            print(f"Используется устройство ввода: {device}")
-        elif config.USE_ASIO:
-            print(f"Используется ASIO драйвер: {config.ASIO_DEVICE_NAME}")
-        
-        if use_callback:
-            print("Режим: callback (минимальная задержка)")
-        else:
-            print("Режим: стандартный")
-        
-        print("Нажмите Ctrl+C для остановки.")
-
-        try:
-            while True:
-                audio = record_audio(
-                    duration=config.WINDOW_SEC,
-                    samplerate=config.SAMPLE_RATE,
-                    device=device,
-                    use_callback=use_callback
-                )
-                features = extract_features(audio, config.SAMPLE_RATE).reshape(1, -1)
-                preds, probs = self.classifier.predict(features)
-                class_name = config.CLASSES[preds[0]]
-                confidence = np.max(probs[0])
-                # Передаём также вероятности обоих классов
-                callback(class_name, confidence, probs[0])
-        except KeyboardInterrupt:
-            print("\nОстановлено по запросу пользователя.")
-        except Exception as e:
-            print(f"\nОшибка при работе с микрофоном: {e}")
-
-    def list_audio_devices(self):
-        """Выводит список доступных аудиоустройств (для справки)."""
-        import sounddevice as sd
-        print(sd.query_devices())
-        print("\nУстройство ввода по умолчанию:", sd.default.device[0])
+        return prediction, probability
