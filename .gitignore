@@ -47,6 +47,9 @@ coverage/
 htmlcov/
 .coverage
 
+# Project data (audio recordings, datasets)
+data/
+
 # Compressed files
 *.zip
 *.gz
