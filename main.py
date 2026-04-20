@@ -1,7 +1,7 @@
 # main.py
 import argparse
 from recognition.recognizer import DroneRecognizer
-from audio.recorder import check_microphone, list_devices
+from audio.recorder import check_microphone, list_devices, list_asio_devices
 
 
 def print_result(class_name, confidence, probs):
@@ -11,15 +11,22 @@ def print_result(class_name, confidence, probs):
 def main():
     parser = argparse.ArgumentParser(description='DronePrint — акустическая детекция дронов')
     parser.add_argument('--file', type=str, help='Распознать аудиофайл (WAV) вместо микрофона')
-    parser.add_argument('--list-devices', action='store_true', help='Показать список аудиоустройств и выйти')
+    parser.add_argument('--list-devices', action='store_true', help='Показать все аудиоустройства с Host API')
+    parser.add_argument('--list-asio', action='store_true', help='Показать только ASIO устройства (рекомендуется для UR44C)')
     parser.add_argument('--device', type=int, default=None, help='Индекс устройства ввода для микрофона')
     parser.add_argument('--check-mic', action='store_true', help='Проверить работу микрофона и выйти')
     parser.add_argument('--mic-duration', type=float, default=2.0, help='Длительность проверки микрофона в секундах')
+    parser.add_argument('--callback', action='store_true', help='Использовать callback режим записи (минимальная задержка)')
     args = parser.parse_args()
 
-    # Если нужно просто показать устройства
+    # Если нужно показать все устройства
     if args.list_devices:
         list_devices()
+        return
+
+    # Если нужно показать только ASIO устройства
+    if args.list_asio:
+        list_asio_devices()
         return
 
     # Если нужно проверить микрофон
@@ -44,7 +51,7 @@ def main():
         print(f"Результат: {class_name} (уверенность: {conf:.3f})")
     else:
         # Запуск непрерывного распознавания с микрофона
-        recognizer.recognize_stream(print_result, device=args.device)
+        recognizer.recognize_stream(print_result, device=args.device, use_callback=args.callback)
 
 
 if __name__ == '__main__':

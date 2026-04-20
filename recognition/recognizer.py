@@ -34,7 +34,7 @@ class DroneRecognizer:
         confidence = np.max(probs[0])
         return class_name, confidence
 
-    def recognize_stream(self, callback, device=None):
+    def recognize_stream(self, callback, device=None, use_callback=False):
         """
         Запускает непрерывное распознавание с микрофона.
         Для каждого окна длительностью config.WINDOW_SEC вызывает callback.
@@ -42,12 +42,21 @@ class DroneRecognizer:
         Параметры:
             callback: функция, принимающая (class_name, confidence).
             device: индекс устройства микрофона (если нужно выбрать конкретный).
+            use_callback: bool — использовать callback режим для минимальной задержки.
         """
         from audio.recorder import record_audio
 
         print(f"Прослушивание... (окно {config.WINDOW_SEC} сек, частота {config.SAMPLE_RATE} Гц)")
         if device is not None:
             print(f"Используется устройство ввода: {device}")
+        elif config.USE_ASIO:
+            print(f"Используется ASIO драйвер: {config.ASIO_DEVICE_NAME}")
+        
+        if use_callback:
+            print("Режим: callback (минимальная задержка)")
+        else:
+            print("Режим: стандартный")
+        
         print("Нажмите Ctrl+C для остановки.")
 
         try:
@@ -55,7 +64,8 @@ class DroneRecognizer:
                 audio = record_audio(
                     duration=config.WINDOW_SEC,
                     samplerate=config.SAMPLE_RATE,
-                    device=device
+                    device=device,
+                    use_callback=use_callback
                 )
                 features = extract_features(audio, config.SAMPLE_RATE).reshape(1, -1)
                 preds, probs = self.classifier.predict(features)
