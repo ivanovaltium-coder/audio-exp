@@ -104,3 +104,4 @@ NOTES_*.md
 # Локальная документация и личные заметки (НЕ отправлять в Git)
 *.local.md
 *.private.txt
+gui_monitor.py
