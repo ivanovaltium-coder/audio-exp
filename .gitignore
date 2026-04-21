@@ -106,3 +106,5 @@ NOTES_*.md
 *.private.txt
 gui_monitor.py
 doa_geometry.py
+audio/doa_*.py
+audio/doa_geometry.py
