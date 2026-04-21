@@ -105,3 +105,4 @@ NOTES_*.md
 *.local.md
 *.private.txt
 gui_monitor.py
+doa_geometry.py
