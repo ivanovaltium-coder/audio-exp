@@ -93,3 +93,14 @@ venv/
 *.wav
 data/raw/
 *.whl
+
+# --- Локальная документация (не отправлять в Git) ---
+docs_local/
+LOCAL_*.md
+MANUAL_*.md
+CHEATSHEET_*.md
+NOTES_*.md
+
+# Локальная документация и личные заметки (НЕ отправлять в Git)
+*.local.md
+*.private.txt
