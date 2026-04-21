@@ -2,7 +2,7 @@ import argparse
 import sys
 import os
 import config
-from audio.recorder import record_audio, check_microphone, list_all_devices_detailed, find_best_device
+from audio.recorder import record_audio, check_microphone, get_asio_device_id
 
 
 def main():
@@ -17,15 +17,13 @@ def main():
     args = parser.parse_args()
 
     if args.list_asio:
-        devices = list_all_devices_detailed()
-        print(f"\n{'ID':<5} | {'Название':<40} | {'Входы':<5} | {'Частота':<8} | {'Host API'}")
-        print("-" * 90)
-        for d in devices:
-            name = (d['name'][:37] + '...') if len(d['name']) > 40 else d['name']
-            print(f"{d['index']:<5} | {name:<40} | {d['channels']:<5} | {d['sample_rate']:<8} | {d['host_api']}")
-
-        print("\n💡 Совет: Ищите устройство с 8 входами. Если Steinberg показывает только 2, ")
-        print("   попробуйте устройства с названием 'Input' или проверьте настройки dspMixFX.")
+        print("\n=== ПОИСК УСТРОЙСТВА ЧЕРЕЗ ASIO API ===")
+        try:
+            dev_id = get_asio_device_id()
+            print(f"✅ Успешно найдено устройство ASIO с ID: {dev_id}")
+            print("Используйте этот ID для запуска записи: python main.py --device <ID>")
+        except Exception as e:
+            print(f"❌ Ошибка поиска: {e}")
         return
 
     if args.check_mic:
