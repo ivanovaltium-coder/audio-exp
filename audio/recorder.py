@@ -89,44 +89,26 @@ def list_asio_devices():
 
 def record_audio(
         duration: float = None,
-        device_index: int = None,
-        channels: int = None,
-        sample_rate: int = None
+        device_index: int = 53,  # По умолчанию ваш ID
+        channels: int = 8,
+        sample_rate: int = 96000,
+        output_filename: str = "recording_8ch.wav",
+        save_file: bool = True
 ) -> np.ndarray:
-    """
-    Записывает аудио через ASIO драйвер.
-    По умолчанию: 8 каналов, 96000 Гц, 24 бита.
-    """
-    # Настройки по умолчанию из config или жестко заданные для ASIO
     if duration is None:
         duration = getattr(config, 'RECORD_DURATION', 5.0)
-    if channels is None:
-        channels = 8  # Критично для UR44C
-    if sample_rate is None:
-        sample_rate = 96000  # Критично для UR44C
 
-    p = get_pyaudio_instance()
+    p = pyaudio.PyAudio()
 
-    # Определение устройства
-    if device_index is None:
-        device_index = get_asio_device_id("Steinberg")
-        if device_index is None:
-            raise ValueError("Не удалось найти устройство ASIO автоматически. Укажите --device <ID>")
+    # Формат 24 бита
+    audio_format = pyaudio.paInt24
 
-    # Проверка существования устройства
-    try:
-        dev_info = p.get_device_info_by_index(device_index)
-        print(f"🎙️ Запись: Устройство '{dev_info['name']}' (ID: {device_index})")
-        print(f"   Каналы: {channels}, Частота: {sample_rate} Гц, Длительность: {duration} сек")
-        print(f"   Формат: 24 бита (paInt24)")
-    except IOError:
-        raise ValueError(f"Устройство с ID {device_index} не найдено.")
+    print(f"🎙️ Запись: Устройство 'Yamaha Steinberg USB ASIO' (ID: {device_index})")
+    print(f"   Каналы: {channels}, Частота: {sample_rate} Гц, Длительность: {duration} сек")
+    print(f"   Формат: 24 бита (paInt24)")
 
     frames = []
-    audio_format = pyaudio.paInt24
-    chunk = 4096  # Размер буфера как в рабочем примере
 
-    stream = None
     try:
         stream = p.open(
             format=audio_format,
@@ -134,66 +116,88 @@ def record_audio(
             rate=sample_rate,
             input=True,
             input_device_index=device_index,
-            frames_per_buffer=chunk
+            frames_per_buffer=4096
         )
 
         print("   🟢 Запись началась...")
-        chunks_to_record = int(sample_rate / chunk * duration)
+        chunks_to_record = int(sample_rate / 4096 * duration)
 
         for _ in range(chunks_to_record):
-            data = stream.read(chunk, exception_on_overflow=False)
+            data = stream.read(4096, exception_on_overflow=False)
             frames.append(data)
 
         print("   🔴 Запись завершена.")
+        stream.stop_stream()
+        stream.close()
 
     except Exception as e:
-        print(f"❌ Ошибка во время записи: {e}")
-        if stream:
-            stream.stop_stream()
+        print(f"❌ Ошибка записи: {e}")
+        if 'stream' in locals():
             stream.close()
         p.terminate()
         raise
-    finally:
-        if stream:
-            stream.stop_stream()
-            stream.close()
-        p.terminate()
 
-    # Конвертация байтов в numpy массив (для 24 бит это сложнее)
-    # PyAudio возвращает 24 бита в 3 байтах.
-    # Для простоты классификации часто приводят к 32 битам или обрабатывают байты напрямую.
-    # Здесь сделаем конвертацию в float32 [-1, 1] для совместимости с sklearn/librosa.
+    p.terminate()
 
+    # Конвертация в numpy массив для обработки
+    # Для 24 бит нужна аккуратная обработка байтов
     raw_data = b''.join(frames)
 
-    # Обработка 24-битных данных (3 байта на сэмпл)
-    # Преобразуем в numpy array uint8, затем переупакуем в int32
-    samples_count = len(raw_data) // (channels * 3)
-    audio_array = np.zeros((samples_count * channels), dtype=np.int32)
+    # Преобразование 24 бит (3 байта) в 32 бита (4 байта) для numpy
+    # Добавляем нулевой байт в начало каждого сэмпла (знаковый int32)
+    samples = []
+    sample_size = 3 * channels
+    num_samples = len(raw_data) // sample_size
 
-    # Быстрая векторизованная конвертация (little-endian)
-    # Байты: [B0, B1, B2] -> Int32: [0, B2, B1, B0] (с знаковым расширением)
-    raw_bytes = np.frombuffer(raw_data, dtype=np.uint8)
-    raw_bytes = raw_bytes.reshape(-1, 3)
+    # Быстрая векторизованная конвертация
+    buffer = np.frombuffer(raw_data, dtype=np.uint8)
+    buffer = buffer.reshape(-1, 3 * channels)
 
-    # Сдвигаем байты и собираем 32-битное число
-    # B0 - младший, B2 - старший (знаковый)
-    audio_array = (raw_bytes[:, 0].astype(np.int32) |
-                   (raw_bytes[:, 1].astype(np.int32) << 8) |
-                   (raw_bytes[:, 2].astype(np.int32) << 16))
+    # Создаем массив int32
+    audio_int32 = np.zeros((buffer.shape[0], channels), dtype=np.int32)
 
-    # Знаковое расширение для 24 бит (если старший бит 23-го разряда равен 1)
-    mask = 1 << 23
-    audio_array = (audio_array ^ mask) - mask
+    for ch in range(channels):
+        # Сдвиг байтов для каждого канала
+        # Байты идут подряд: [ch0_b0, ch0_b1, ch0_b2, ch1_b0, ch1_b1, ch1_b2, ...]
+        # Нам нужно собрать их в int32 со знаком
+        offset = ch * 3
+        b0 = buffer[:, offset].astype(np.int32)
+        b1 = buffer[:, offset + 1].astype(np.int32)
+        b2 = buffer[:, offset + 2].astype(np.int32)
 
-    # Reshape в (samples, channels)
-    audio_array = audio_array.reshape(-1, channels).astype(np.float32)
+        # Сборка 24 бит в 32 бит (с учетом знака)
+        val = (b2 << 16) | (b1 << 8) | b0
+        val = np.where(val >= 0x800000, val - 0x1000000, val)  # Знаковое расширение
+        audio_int32[:, ch] = val
 
-    # Нормализация (максимальное значение 24-битного числа = 2^23 - 1)
-    audio_array /= 8388607.0
+    # Нормализация в float32 [-1, 1]
+    audio_float = audio_int32.astype(np.float32) / 8388608.0  # 2^23
 
-    return audio_array
+    print(f"✅ Записано: {audio_float.shape}")
 
+    # Сохранение в WAV файл
+    if save_file:
+        try:
+            import wave
+            # Для записи 24 бит в wave нужно использовать особый подход,
+            # но стандартный wave модуль плохо дружит с 24 битами напрямую из numpy.
+            # Проще сохранить как 32 бита (pcms32) или 16 бит для совместимости.
+            # Сохраним как 32 бита (ближе всего к оригиналу)
+
+            wf = wave.open(output_filename, 'wb')
+            wf.setnchannels(channels)
+            wf.setsampwidth(4)  # 4 байта = 32 бита
+            wf.setframerate(sample_rate)
+
+            # Конвертируем float32 обратно в int32 для записи
+            audio_save = (audio_float * 2147483647).astype(np.int32)
+            wf.writeframes(audio_save.tobytes())
+            wf.close()
+            print(f"💾 Файл сохранен: {os.path.abspath(output_filename)}")
+        except Exception as e:
+            print(f"⚠️ Не удалось сохранить WAV: {e}")
+
+    return audio_float
 
 def check_microphone(
         device_index: Optional[int] = None,
