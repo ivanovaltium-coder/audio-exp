@@ -3,19 +3,23 @@ import wave
 import numpy as np
 import time
 import os
-from typing import Optional, Tuple, List, Dict, Any
+from typing import Optional, Dict, Any, List
 import config
 
 
-def get_asio_device_id(target_name_part="Steinberg"):
+def get_pyaudio_instance() -> pyaudio.PyAudio:
+    """Создает и возвращает экземпляр PyAudio."""
+    return pyaudio.PyAudio()
+
+
+def get_asio_device_id(device_name: str = "Steinberg") -> Optional[int]:
     """
-    Ищет устройство ASIO Steinberg и возвращает его ID.
-    Если не находит, возвращает None.
+    Ищет устройство ASIO (Yamaha Steinberg) и возвращает его ID.
     """
-    p = pyaudio.PyAudio()
+    p = get_pyaudio_instance()
     asio_api_idx = -1
 
-    # 1. Ищем индекс Host API ASIO
+    # 1. Находим индекс Host API ASIO
     for i in range(p.get_host_api_count()):
         api_info = p.get_host_api_info_by_index(i)
         if "ASIO" in api_info['name'].upper():
@@ -23,30 +27,39 @@ def get_asio_device_id(target_name_part="Steinberg"):
             break
 
     if asio_api_idx == -1:
+        print("❌ Драйвер ASIO не найден в системе PyAudio!")
         p.terminate()
         return None
 
-    # 2. Ищем устройство внутри ASIO
+    # 2. Ищем устройство внутри ASIO API
     for i in range(p.get_device_count()):
         dev_info = p.get_device_info_by_index(i)
-        # Проверяем, принадлежит ли устройство к ASIO API
-        if dev_info['hostApi'] == asio_api_idx:
-            # Проверяем имя и наличие входных каналов
-            if (target_name_part.lower() in dev_info['name'].lower()) and (dev_info['maxInputChannels'] > 0):
+        # Проверяем, принадлежит ли устройство к ASIO API и имеет ли входы
+        if dev_info['hostApi'] == asio_api_idx and dev_info['maxInputChannels'] > 0:
+            if device_name.lower() in dev_info['name'].lower():
                 print(f"✅ Найдено ASIO устройство: {dev_info['name']} (ID: {i})")
+                print(f"   Доступно входов: {dev_info['maxInputChannels']}")
                 p.terminate()
                 return i
+
+    print(f"⚠️ Устройство '{device_name}' не найдено в ASIO.")
+    # Если точное имя не найдено, вернем первое попавшееся ASIO устройство с входами
+    for i in range(p.get_device_count()):
+        dev_info = p.get_device_info_by_index(i)
+        if dev_info['hostApi'] == asio_api_idx and dev_info['maxInputChannels'] >= 4:
+            print(f"💡 Используем альтернативное устройство: {dev_info['name']} (ID: {i})")
+            p.terminate()
+            return i
 
     p.terminate()
     return None
 
 
 def list_asio_devices():
-    """Выводит список всех устройств, доступных через ASIO."""
+    """Выводит список всех устройств ASIO."""
+    print("\n=== ПОИСК УСТРОЙСТВА ЧЕРЕЗ ASIO API ===")
     p = get_pyaudio_instance()
     asio_api_idx = -1
-
-    print("\n=== ПОИСК УСТРОЙСТВА ЧЕРЕЗ ASIO API ===")
 
     for i in range(p.get_host_api_count()):
         api_info = p.get_host_api_info_by_index(i)
@@ -56,166 +69,178 @@ def list_asio_devices():
 
     if asio_api_idx == -1:
         print("❌ Ошибка поиска: ❌ Драйвер ASIO не найден в системе PyAudio!")
-        print("   Убедитесь, что установлен Yamaha Steinberg USB ASIO.")
+        print("Убедитесь, что установлен Yamaha Steinberg USB ASIO и закрыт в других программах.")
         p.terminate()
         return
 
-    print(f"✅ ASIO найден! (Host API ID: {asio_api_idx})\n")
-
-    found_count = 0
+    found = False
     for i in range(p.get_device_count()):
         dev_info = p.get_device_info_by_index(i)
         if dev_info['hostApi'] == asio_api_idx:
-            print(f"ID {i}: {dev_info['name']}")
-            print(f"   Входов: {dev_info['maxInputChannels']}")
-            if dev_info['maxInputChannels'] >= 4:
-                print("   🎯 ЭТО УСТРОЙСТВО ПОДХОДИТ ДЛЯ МНОГОКАНАЛЬНОЙ ЗАПИСИ")
-            print("-" * 30)
-            found_count += 1
+            found = True
+            print(f"ID: {i} | {dev_info['name']}")
+            print(f"   Входов: {dev_info['maxInputChannels']}, Частота: {dev_info['defaultSampleRate']}")
 
-    if found_count == 0:
-        print("   Нет устройств в ASIO. Проверьте панель управления звуком.")
+    if not found:
+        print("❌ Устройства ASIO не найдены.")
 
     p.terminate()
 
 
 def record_audio(
         duration: float = None,
-        device_index: Optional[int] = None,
+        device_index: int = None,
         channels: int = None,
-        sample_rate: int = None,
-        format_type: int = None
+        sample_rate: int = None
 ) -> np.ndarray:
     """
-    Записывает аудио через PyAudio с прямым указанием параметров ASIO.
+    Записывает аудио через ASIO драйвер.
+    По умолчанию: 8 каналов, 96000 Гц, 24 бита.
     """
-    # Параметры по умолчанию из config или жестко заданные для UR44C
-    if duration is None: duration = getattr(config, 'RECORD_DURATION', 5.0)
-    if channels is None: channels = getattr(config, 'NUM_CHANNELS', 8)
-    if sample_rate is None: sample_rate = getattr(config, 'SAMPLE_RATE', 96000)
-    if format_type is None: format_type = getattr(config, 'AUDIO_FORMAT', pyaudio.paInt24)
+    # Настройки по умолчанию из config или жестко заданные для ASIO
+    if duration is None:
+        duration = getattr(config, 'RECORD_DURATION', 5.0)
+    if channels is None:
+        channels = 8  # Критично для UR44C
+    if sample_rate is None:
+        sample_rate = 96000  # Критично для UR44C
 
     p = get_pyaudio_instance()
 
     # Определение устройства
-    target_device_id = device_index
-    if target_device_id is None:
-        target_device_id = get_asio_device_id("Steinberg")
-        if target_device_id is None:
-            # Если ASIO не найден, пробуем найти любое устройство с нужным кол-вом каналов
-            print("⚠️ Попытка записи без явного ASIO...")
-            for i in range(p.get_device_count()):
-                dev = p.get_device_info_by_index(i)
-                if dev['maxInputChannels'] >= channels and "Steinberg" in dev['name']:
-                    target_device_id = i
-                    break
+    if device_index is None:
+        device_index = get_asio_device_id("Steinberg")
+        if device_index is None:
+            raise ValueError("Не удалось найти устройство ASIO автоматически. Укажите --device <ID>")
 
-    if target_device_id is None:
-        raise ValueError("Не удалось найти подходящее аудиоустройство. Запустите --list-asio.")
-
-    dev_info = p.get_device_info_by_index(target_device_id)
-    print(f"🎙️ Запись: Устройство '{dev_info['name']}' (ID: {target_device_id})")
-    print(f"   Каналы: {channels}, Частота: {sample_rate} Гц, Формат: {format_type}, Длительность: {duration} сек")
+    # Проверка существования устройства
+    try:
+        dev_info = p.get_device_info_by_index(device_index)
+        print(f"🎙️ Запись: Устройство '{dev_info['name']}' (ID: {device_index})")
+        print(f"   Каналы: {channels}, Частота: {sample_rate} Гц, Длительность: {duration} сек")
+        print(f"   Формат: 24 бита (paInt24)")
+    except IOError:
+        raise ValueError(f"Устройство с ID {device_index} не найдено.")
 
     frames = []
+    audio_format = pyaudio.paInt24
+    chunk = 4096  # Размер буфера как в рабочем примере
 
+    stream = None
     try:
         stream = p.open(
-            format=format_type,
+            format=audio_format,
             channels=channels,
             rate=sample_rate,
             input=True,
-            input_device_index=target_device_id,
-            frames_per_buffer=getattr(config, 'BUFFER_SIZE', 4096)
+            input_device_index=device_index,
+            frames_per_buffer=chunk
         )
 
         print("   🟢 Запись началась...")
-        chunks_to_record = int(sample_rate / getattr(config, 'BUFFER_SIZE', 4096) * duration)
+        chunks_to_record = int(sample_rate / chunk * duration)
 
         for _ in range(chunks_to_record):
-            data = stream.read(getattr(config, 'BUFFER_SIZE', 4096), exception_on_overflow=False)
+            data = stream.read(chunk, exception_on_overflow=False)
             frames.append(data)
 
         print("   🔴 Запись завершена.")
-        stream.stop_stream()
-        stream.close()
 
     except Exception as e:
-        print(f"❌ Ошибка записи: {e}")
-        if 'stream' in locals():
+        print(f"❌ Ошибка во время записи: {e}")
+        if stream:
             stream.stop_stream()
             stream.close()
         p.terminate()
         raise
+    finally:
+        if stream:
+            stream.stop_stream()
+            stream.close()
+        p.terminate()
 
-    p.terminate()
+    # Конвертация байтов в numpy массив (для 24 бит это сложнее)
+    # PyAudio возвращает 24 бита в 3 байтах.
+    # Для простоты классификации часто приводят к 32 битам или обрабатывают байты напрямую.
+    # Здесь сделаем конвертацию в float32 [-1, 1] для совместимости с sklearn/librosa.
 
-    # Конвертация в numpy
     raw_data = b''.join(frames)
 
-    # Обработка формата (paInt24 требует особой обработки)
-    if format_type == pyaudio.paInt24:
-        # Преобразование 3 байт в 4 байта (int32)
-        # Разбиваем байты на тройки
-        samples = []
-        for i in range(0, len(raw_data), 3 * channels):
-            chunk = raw_data[i:i + 3 * channels]
-            if len(chunk) < 3 * channels: break
+    # Обработка 24-битных данных (3 байта на сэмпл)
+    # Преобразуем в numpy array uint8, затем переупакуем в int32
+    samples_count = len(raw_data) // (channels * 3)
+    audio_array = np.zeros((samples_count * channels), dtype=np.int32)
 
-            for ch in range(channels):
-                idx = ch * 3
-                # Байты в little-endian: [B0, B1, B2] -> знаковое 24 бит
-                b0, b1, b2 = chunk[idx], chunk[idx + 1], chunk[idx + 2]
-                val = b0 | (b1 << 8) | (b2 << 16)
-                if val & 0x800000:  # Отрицательное число
-                    val -= 0x1000000
-                samples.append(val)
+    # Быстрая векторизованная конвертация (little-endian)
+    # Байты: [B0, B1, B2] -> Int32: [0, B2, B1, B0] (с знаковым расширением)
+    raw_bytes = np.frombuffer(raw_data, dtype=np.uint8)
+    raw_bytes = raw_bytes.reshape(-1, 3)
 
-        audio_array = np.array(samples, dtype=np.int32)
-        # Reshape
-        total_samples = len(audio_array) // channels
-        audio_array = audio_array[:total_samples * channels].reshape(-1, channels)
-        # Нормализация (максимум для 24 бит = 8388607)
-        return audio_array.astype(np.float32) / 8388607.0
+    # Сдвигаем байты и собираем 32-битное число
+    # B0 - младший, B2 - старший (знаковый)
+    audio_array = (raw_bytes[:, 0].astype(np.int32) |
+                   (raw_bytes[:, 1].astype(np.int32) << 8) |
+                   (raw_bytes[:, 2].astype(np.int32) << 16))
 
-    elif format_type == pyaudio.paInt16:
-        audio_array = np.frombuffer(raw_data, dtype=np.int16)
-        audio_array = audio_array.reshape(-1, channels)
-        return audio_array.astype(np.float32) / 32768.0
+    # Знаковое расширение для 24 бит (если старший бит 23-го разряда равен 1)
+    mask = 1 << 23
+    audio_array = (audio_array ^ mask) - mask
 
-    else:
-        # Для int32
-        audio_array = np.frombuffer(raw_data, dtype=np.int32)
-        audio_array = audio_array.reshape(-1, channels)
-        return audio_array.astype(np.float32) / 2147483647.0
+    # Reshape в (samples, channels)
+    audio_array = audio_array.reshape(-1, channels).astype(np.float32)
+
+    # Нормализация (максимальное значение 24-битного числа = 2^23 - 1)
+    audio_array /= 8388607.0
+
+    return audio_array
 
 
-def check_microphone(device_index: Optional[int] = None, duration: float = 2.0):
-    """Проверка микрофона с записью и анализом уровня."""
+def check_microphone(
+        device_index: Optional[int] = None,
+        duration: float = 2.0
+) -> Dict[str, Any]:
+    """Проверка микрофона."""
     print("=" * 60)
     print("ПРОВЕРКА МИКРОФОНА (PyAudio + ASIO)")
     print("=" * 60)
 
+    if device_index is None:
+        device_index = get_asio_device_id("Steinberg")
+        if device_index is None:
+            return {"success": False, "error": "ASIO device not found"}
+
     try:
-        # Пробуем записать 8 каналов
+        # Записываем 8 каналов, но анализируем первый
         audio_data = record_audio(
             duration=duration,
             device_index=device_index,
-            channels=8,  # Жестко 8 каналов для проверки
-            sample_rate=96000,
-            format_type=pyaudio.paInt24
+            channels=8,
+            sample_rate=96000
         )
 
-        # Анализируем первые 4 канала (микрофоны)
-        print("\n--- Анализ уровней (каналы 1-4) ---")
-        for ch in range(min(4, audio_data.shape[1])):
-            channel_data = audio_data[:, ch]
-            rms = np.sqrt(np.mean(channel_data ** 2))
-            db = 20 * np.log10(rms + 1e-10)
-            status = "✅ OK" if db > -40 else "❌ Тишина"
-            print(f"Канал {ch + 1}: {db:.1f} дБ {status}")
+        # Анализ первого канала
+        channel_0 = audio_data[:, 0]
+        rms = np.sqrt(np.mean(channel_0 ** 2))
+        db_level = 20 * np.log10(rms + 1e-10)
+        peak = np.max(np.abs(channel_0))
+        peak_db = 20 * np.log10(peak + 1e-10)
 
-        return {"success": True, "data": audio_data}
+        threshold_db = getattr(config, 'MIC_CHECK_THRESHOLD_DB', -40)
+
+        print("\n" + "-" * 60)
+        print(f"РЕЗУЛЬТАТЫ (Канал 1 из 8):")
+        print("-" * 60)
+        print(f"Средний уровень (RMS): {db_level:.2f} дБ")
+        print(f"Пиковый уровень: {peak_db:.2f} дБ")
+
+        success = db_level > threshold_db
+
+        if success:
+            print("\n✅ МИКРОФОН РАБОТАЕТ! (Сигнал > порога)")
+        else:
+            print("\n❌ СИГНАЛ СЛИШКОМ ТИХИЙ. Проверьте Gain и подключение.")
+
+        return {"success": success, "rms_db": db_level}
 
     except Exception as e:
         print(f"\n❌ Ошибка проверки: {e}")
